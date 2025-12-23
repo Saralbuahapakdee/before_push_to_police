@@ -55,19 +55,31 @@
       @logout="handleLogout"
     />
 
-    <!-- Global Detection Alert Banner - FIXED TEXT -->
-    <div v-if="token && currentDetection.detected && hasObjects" class="global-alert-banner">
+    <!-- NEW: Incident Alert Banner with Close Button -->
+    <div v-if="token && currentAlert" class="incident-alert-banner">
+      <button @click="dismissAlert" class="alert-close-btn" title="Dismiss alert">✕</button>
       <div class="alert-content">
         <div class="alert-icon">🚨</div>
         <div class="alert-info">
-          <strong>WEAPON DETECTED!</strong>
-          <span>
-            <span v-for="(data, weaponType, index) in currentDetection.objects" :key="weaponType">
-              {{ data.count }} {{ formatWeaponName(weaponType) }} {{ index < Object.keys(currentDetection.objects).length - 1 ? ' ' : '' }}
-            </span>
-          </span>
+          <strong>NEW INCIDENT!</strong>
+          <div class="alert-details">
+            <div class="alert-detail-row">
+              <span class="alert-label">📍 Location:</span>
+              <span class="alert-value">{{ currentAlert.incident.camera_location }}</span>
+            </div>
+            <div class="alert-detail-row">
+              <span class="alert-label">⚔️ Weapon:</span>
+              <span :class="['weapon-badge', currentAlert.incident.weapon_type]">
+                {{ formatWeaponName(currentAlert.incident.weapon_type) }}
+              </span>
+            </div>
+            <div class="alert-detail-row">
+              <span class="alert-label">🕐 Time:</span>
+              <span class="alert-value">{{ formatDateTime(currentAlert.incident.detected_at) }}</span>
+            </div>
+          </div>
         </div>
-        <div class="alert-time">{{ formatTime(currentDetection.timestamp) }}</div>
+        <div class="alert-incident-number">{{ currentAlert.incident.incident_number }}</div>
       </div>
     </div>
   </div>
@@ -96,17 +108,9 @@ const loginData = ref({
   password: ''
 })
 
-const currentDetection = ref({
-  detected: false,
-  objects: {},
-  timestamp: null
-})
+const currentAlert = ref(null)
 
 let unsubscribeDetection = null
-
-const hasObjects = computed(() => {
-  return Object.keys(currentDetection.value.objects || {}).length > 0
-})
 
 onMounted(() => {
   const savedToken = localStorage.getItem('authToken')
@@ -135,7 +139,7 @@ onUnmounted(() => {
 
 function startDetectionService() {
   unsubscribeDetection = detectionService.subscribe((state) => {
-    currentDetection.value = state.currentDetection
+    currentAlert.value = state.currentAlert
   })
   
   detectionService.startPolling(token.value)
@@ -152,6 +156,10 @@ function stopDetectionService() {
   detectionService.stopPolling()
   
   console.log('🛑 Global detection service stopped')
+}
+
+function dismissAlert() {
+  detectionService.dismissAlert()
 }
 
 function clearError() {
@@ -217,7 +225,7 @@ function handleLogout() {
   
   token.value = ''
   userData.value = { username: '', fullName: '', role: '', userId: null }
-  currentDetection.value = { detected: false, objects: {}, timestamp: null }
+  currentAlert.value = null
   
   localStorage.removeItem('authToken')
   localStorage.removeItem('currentUsername')
@@ -246,10 +254,11 @@ function formatWeaponName(weaponType) {
   return names[weaponType] || weaponType.replace('-', ' ').replace('_', ' ')
 }
 
-function formatTime(timestamp) {
+function formatDateTime(timestamp) {
   if (!timestamp) return ''
   try {
-    return new Date(timestamp).toLocaleTimeString()
+    const date = new Date(timestamp)
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`
   } catch {
     return ''
   }
@@ -398,20 +407,22 @@ body {
   font-weight: 600;
 }
 
-.global-alert-banner {
+/* NEW: Incident Alert Banner Styles */
+.incident-alert-banner {
   position: fixed;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;
-  min-width: 400px;
+  min-width: 500px;
   max-width: 90vw;
   background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
   color: white;
-  padding: 15px 20px;
+  padding: 20px 25px;
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(231, 76, 60, 0.4);
   animation: slideUp 0.3s ease-out, pulse 2s ease-in-out infinite;
+  position: relative;
 }
 
 @keyframes slideUp {
@@ -434,15 +445,42 @@ body {
   }
 }
 
-.alert-content {
+.alert-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  z-index: 10;
+}
+
+.alert-close-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.alert-content {
+  display: flex;
+  align-items: flex-start;
   gap: 15px;
+  padding-right: 30px;
 }
 
 .alert-icon {
   font-size: 2rem;
   animation: shake 0.5s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
 @keyframes shake {
@@ -455,24 +493,72 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 10px;
 }
 
 .alert-info strong {
-  font-size: 1.1rem;
+  font-size: 1.2rem;
   letter-spacing: 0.5px;
+  display: block;
+  margin-bottom: 5px;
 }
 
-.alert-info span {
+.alert-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.alert-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.95rem;
-  opacity: 0.95;
 }
 
-.alert-time {
+.alert-label {
+  opacity: 0.9;
+  font-weight: 500;
+  min-width: 90px;
+}
+
+.alert-value {
+  opacity: 0.95;
+  font-weight: 600;
+}
+
+.weapon-badge {
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.weapon-badge.knife {
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.weapon-badge.pistol {
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.weapon-badge.heavy_weapon {
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.alert-incident-number {
   font-size: 0.85rem;
   opacity: 0.9;
   font-weight: 600;
   white-space: nowrap;
+  align-self: flex-start;
 }
 
 @media (max-width: 768px) {
@@ -488,13 +574,17 @@ body {
     font-size: 3rem;
   }
   
-  .global-alert-banner {
+  .incident-alert-banner {
     min-width: 90vw;
     bottom: 10px;
   }
   
   .alert-content {
-    flex-wrap: wrap;
+    flex-direction: column;
+  }
+  
+  .alert-incident-number {
+    align-self: flex-end;
   }
 }
 </style>

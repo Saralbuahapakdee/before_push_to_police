@@ -1,3 +1,5 @@
+// notworkingone/frontend/src/services/detectionService.js
+
 class DetectionService {
   constructor() {
     this.listeners = []
@@ -14,9 +16,12 @@ class DetectionService {
     this.token = null
     this.lastTimestamp = null
     
-    // NEW: Track logged detections to prevent duplicates
-    this.loggedDetections = new Map() // key: weaponType, value: { timestamp, count }
-    this.LOG_COOLDOWN = 5000 // 5 seconds cooldown between logs for same weapon type
+    // Track last incident per weapon type (5 min cooldown)
+    this.lastIncidentByWeapon = new Map() // key: weaponType, value: { timestamp, incidentId }
+    this.INCIDENT_COOLDOWN = 5 * 60 * 1000 // 5 minutes in milliseconds
+    
+    // NEW: Track current active alert
+    this.currentAlert = null
   }
 
   reset() {
@@ -32,7 +37,8 @@ class DetectionService {
     this.isConnected = false
     this.token = null
     this.lastTimestamp = null
-    this.loggedDetections.clear()
+    this.lastIncidentByWeapon.clear()
+    this.currentAlert = null
     console.log('🔄 Detection service reset')
   }
 
@@ -101,7 +107,7 @@ class DetectionService {
           
           this.showNotification(data)
           
-          // NEW: Log with cooldown to prevent spam
+          // Log detections with 5-minute cooldown per weapon type
           await this.logDetectionsWithCooldown(data)
         }
         
@@ -119,7 +125,6 @@ class DetectionService {
     }
   }
 
-  // NEW: Log detections with cooldown to prevent duplicate incidents
   async logDetectionsWithCooldown(detection) {
     if (!this.token) {
       console.log('⚠️ No token available for logging detection')
@@ -129,7 +134,6 @@ class DetectionService {
     const now = Date.now()
     
     try {
-      // Process each weapon type separately
       for (const [weaponType, data] of Object.entries(detection.objects)) {
         const count = data.count || 0
         const confidences = data.confidences || []
@@ -137,11 +141,12 @@ class DetectionService {
         if (count > 0 && confidences.length > 0) {
           const normalizedType = this.normalizeWeaponType(weaponType)
           
-          // Check if we've logged this weapon type recently
-          const lastLog = this.loggedDetections.get(normalizedType)
+          // Check if we've created an incident for this weapon type recently
+          const lastIncident = this.lastIncidentByWeapon.get(normalizedType)
           
-          if (lastLog && (now - lastLog.timestamp) < this.LOG_COOLDOWN) {
-            console.log(`⏳ Skipping ${normalizedType} - logged ${Math.round((now - lastLog.timestamp) / 1000)}s ago (cooldown: ${this.LOG_COOLDOWN / 1000}s)`)
+          if (lastIncident && (now - lastIncident.timestamp) < this.INCIDENT_COOLDOWN) {
+            const remainingTime = Math.ceil((this.INCIDENT_COOLDOWN - (now - lastIncident.timestamp)) / 1000)
+            console.log(`⏳ Skipping ${normalizedType} - incident #${lastIncident.incidentId} created ${Math.round((now - lastIncident.timestamp) / 1000)}s ago (cooldown: ${remainingTime}s remaining)`)
             continue
           }
           
@@ -167,20 +172,24 @@ class DetectionService {
             const result = await response.json()
             console.log(`✅ Logged ${normalizedType} detection:`, result.message)
             
-            if (result.incident_id) {
-              console.log(`🚨 Incident #${result.incident_id} created for ${normalizedType}`)
-            }
-            
-            // Record this log to prevent duplicates
-            this.loggedDetections.set(normalizedType, {
-              timestamp: now,
-              count: count
-            })
-            
-            // Clean up old entries (older than 1 minute)
-            for (const [key, value] of this.loggedDetections.entries()) {
-              if (now - value.timestamp > 60000) {
-                this.loggedDetections.delete(key)
+            // If a NEW incident was created, update our cooldown tracker and set alert
+            if (result.incident_id && result.is_new_incident) {
+              console.log(`🚨 NEW INCIDENT #${result.incident_id} created for ${normalizedType}`)
+              
+              // Store this incident in cooldown tracker
+              this.lastIncidentByWeapon.set(normalizedType, {
+                timestamp: now,
+                incidentId: result.incident_id
+              })
+              
+              // Fetch full incident details for alert
+              await this.fetchAndSetIncidentAlert(result.incident_id)
+              
+              // Clean up old entries (older than cooldown period)
+              for (const [key, value] of this.lastIncidentByWeapon.entries()) {
+                if (now - value.timestamp > this.INCIDENT_COOLDOWN) {
+                  this.lastIncidentByWeapon.delete(key)
+                }
               }
             }
           } else {
@@ -188,13 +197,42 @@ class DetectionService {
             console.error(`❌ Failed to log ${normalizedType} detection:`, error)
           }
           
-          // Small delay between requests to avoid overwhelming backend
+          // Small delay between requests
           await new Promise(resolve => setTimeout(resolve, 100))
         }
       }
     } catch (error) {
       console.error('Error logging detections to backend:', error)
     }
+  }
+
+  async fetchAndSetIncidentAlert(incidentId) {
+    try {
+      const response = await fetch(`/api/incidents/${incidentId}`, {
+        headers: {
+          'Authorization': `Bearer ${this.token}`
+        }
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        this.currentAlert = {
+          incident: data.incident,
+          timestamp: Date.now()
+        }
+        
+        console.log('🔔 Alert set:', this.currentAlert)
+        this.notifyListeners()
+      }
+    } catch (error) {
+      console.error('Error fetching incident details:', error)
+    }
+  }
+
+  dismissAlert() {
+    console.log('❌ Alert dismissed')
+    this.currentAlert = null
+    this.notifyListeners()
   }
 
   normalizeWeaponType(weaponType) {
@@ -274,7 +312,8 @@ class DetectionService {
       currentDetection: this.currentDetection,
       detectionHistory: this.detectionHistory,
       lastCheckTime: this.lastCheckTime,
-      isConnected: this.isConnected
+      isConnected: this.isConnected,
+      currentAlert: this.currentAlert
     })
     
     return () => {
@@ -287,7 +326,8 @@ class DetectionService {
       currentDetection: this.currentDetection,
       detectionHistory: this.detectionHistory,
       lastCheckTime: this.lastCheckTime,
-      isConnected: this.isConnected
+      isConnected: this.isConnected,
+      currentAlert: this.currentAlert
     }
     
     this.listeners.forEach(callback => {
@@ -304,7 +344,8 @@ class DetectionService {
       currentDetection: this.currentDetection,
       detectionHistory: this.detectionHistory,
       lastCheckTime: this.lastCheckTime,
-      isConnected: this.isConnected
+      isConnected: this.isConnected,
+      currentAlert: this.currentAlert
     }
   }
 }
