@@ -13,6 +13,10 @@ class DetectionService {
     this.isConnected = false
     this.token = null
     this.lastTimestamp = null
+    
+    // NEW: Track logged detections to prevent duplicates
+    this.loggedDetections = new Map() // key: weaponType, value: { timestamp, count }
+    this.LOG_COOLDOWN = 5000 // 5 seconds cooldown between logs for same weapon type
   }
 
   reset() {
@@ -28,6 +32,7 @@ class DetectionService {
     this.isConnected = false
     this.token = null
     this.lastTimestamp = null
+    this.loggedDetections.clear()
     console.log('🔄 Detection service reset')
   }
 
@@ -96,8 +101,8 @@ class DetectionService {
           
           this.showNotification(data)
           
-          // Log EACH weapon type separately to backend
-          await this.logAllDetectionsToBackend(data)
+          // NEW: Log with cooldown to prevent spam
+          await this.logDetectionsWithCooldown(data)
         }
         
         this.currentDetection = data
@@ -114,12 +119,14 @@ class DetectionService {
     }
   }
 
-  // NEW: Log each weapon type separately
-  async logAllDetectionsToBackend(detection) {
+  // NEW: Log detections with cooldown to prevent duplicate incidents
+  async logDetectionsWithCooldown(detection) {
     if (!this.token) {
       console.log('⚠️ No token available for logging detection')
       return
     }
+    
+    const now = Date.now()
     
     try {
       // Process each weapon type separately
@@ -128,9 +135,17 @@ class DetectionService {
         const confidences = data.confidences || []
         
         if (count > 0 && confidences.length > 0) {
-          const avgConfidence = confidences.reduce((a, b) => a + b, 0) / confidences.length
-          
           const normalizedType = this.normalizeWeaponType(weaponType)
+          
+          // Check if we've logged this weapon type recently
+          const lastLog = this.loggedDetections.get(normalizedType)
+          
+          if (lastLog && (now - lastLog.timestamp) < this.LOG_COOLDOWN) {
+            console.log(`⏳ Skipping ${normalizedType} - logged ${Math.round((now - lastLog.timestamp) / 1000)}s ago (cooldown: ${this.LOG_COOLDOWN / 1000}s)`)
+            continue
+          }
+          
+          const avgConfidence = confidences.reduce((a, b) => a + b, 0) / confidences.length
           
           console.log(`📝 Logging detection: ${normalizedType} (${(avgConfidence * 100).toFixed(1)}% confidence)`)
           
@@ -154,6 +169,19 @@ class DetectionService {
             
             if (result.incident_id) {
               console.log(`🚨 Incident #${result.incident_id} created for ${normalizedType}`)
+            }
+            
+            // Record this log to prevent duplicates
+            this.loggedDetections.set(normalizedType, {
+              timestamp: now,
+              count: count
+            })
+            
+            // Clean up old entries (older than 1 minute)
+            for (const [key, value] of this.loggedDetections.entries()) {
+              if (now - value.timestamp > 60000) {
+                this.loggedDetections.delete(key)
+              }
             }
           } else {
             const error = await response.json()

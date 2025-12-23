@@ -1,6 +1,7 @@
 import random
 import requests
 from flask import Blueprint, request, Response
+from datetime import datetime, timedelta
 from auth import create_token, verify_token, token_required, get_token_from_request, verify_password, hash_password
 from models import (
     get_user_by_username, get_all_officers, create_user, delete_user, update_password, update_user_profile,
@@ -259,8 +260,8 @@ def set_prefs():
 @token_required
 def log_det():
     """
-    FIXED: Now creates ONE incident per weapon type detection
-    Each weapon detection gets its own incident
+    FIXED: Creates ONE incident per weapon type per time window (5 minutes)
+    Prevents spam from rapid MQTT messages (20/sec)
     """
     try:
         data = request.json
@@ -275,36 +276,71 @@ def log_det():
         # Log the detection
         detection_id = log_detection(user_id, camera_id, weapon_type, confidence_score)
         
-        # Create incident for THIS weapon type if confidence >= 0.80
+        # Check if we should create an incident (confidence >= 0.80)
         incident_id = None
         if confidence_score >= 0.80:
             from database import get_db_connection
+            
+            # Check if there's already a recent PENDING or RESPONDING incident for this weapon+camera
             with get_db_connection() as conn:
                 cursor = conn.cursor()
+                
+                # Get camera location
                 cursor.execute('SELECT location FROM cameras WHERE id = ?', (camera_id,))
                 row = cursor.fetchone()
                 location = row['location'] if row else 'Unknown'
-            
-            # Create incident specifically for this weapon type
-            incident_id = create_incident(
-                camera_id, 
-                weapon_type,  # Each weapon gets its own incident
-                detection_id, 
-                user_id, 
-                location,
-                f"Automatic incident created from {weapon_type} detection"
-            )
-            
-            print(f"✅ Created incident #{incident_id} for {weapon_type} detection (confidence: {confidence_score:.2%})")
-            
-            return {
-                "message": f"Detection logged and incident created for {weapon_type}", 
-                "incident_id": incident_id,
-                "detection_id": detection_id
-            }
+                
+                # Check for existing recent incident (within last 5 minutes)
+                five_minutes_ago = datetime.now() - timedelta(minutes=5)
+                cursor.execute('''
+                    SELECT id, status FROM incidents 
+                    WHERE camera_id = ? 
+                      AND weapon_type = ? 
+                      AND detected_at >= ? 
+                      AND status IN ('pending', 'responding')
+                    ORDER BY detected_at DESC
+                    LIMIT 1
+                ''', (camera_id, weapon_type, five_minutes_ago))
+                
+                existing = cursor.fetchone()
+                
+                if existing:
+                    incident_id = existing['id']
+                    print(f"✓ Using existing incident #{incident_id} for {weapon_type} (status: {existing['status']})")
+                    
+                    # Update the detection to link to this incident
+                    cursor.execute('UPDATE detection_logs SET incident_id = ? WHERE id = ?', 
+                                 (incident_id, detection_id))
+                    conn.commit()
+                    
+                    return {
+                        "message": f"Detection logged and linked to existing incident #{incident_id}",
+                        "incident_id": incident_id,
+                        "detection_id": detection_id,
+                        "is_new_incident": False
+                    }
+                else:
+                    # No recent incident - create a new one
+                    incident_id = create_incident(
+                        camera_id, 
+                        weapon_type,
+                        detection_id, 
+                        user_id, 
+                        location,
+                        f"Automatic incident created from {weapon_type} detection"
+                    )
+                    
+                    print(f"✅ Created NEW incident #{incident_id} for {weapon_type} detection (confidence: {confidence_score:.2%})")
+                    
+                    return {
+                        "message": f"Detection logged and NEW incident #{incident_id} created for {weapon_type}", 
+                        "incident_id": incident_id,
+                        "detection_id": detection_id,
+                        "is_new_incident": True
+                    }
         
         return {
-            "message": "Detection logged successfully",
+            "message": "Detection logged successfully (confidence too low for incident)",
             "detection_id": detection_id
         }
         

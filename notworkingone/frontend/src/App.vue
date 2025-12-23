@@ -63,7 +63,7 @@
           <strong>WEAPON DETECTED!</strong>
           <span>
             <span v-for="(data, weaponType, index) in currentDetection.objects" :key="weaponType">
-              {{ formatWeaponName(weaponType) }} ({{ data.count }}){{ index < Object.keys(currentDetection.objects).length - 1 ? ', ' : '' }}
+              {{ data.count }} {{ formatWeaponName(weaponType) }} {{ index < Object.keys(currentDetection.objects).length - 1 ? ' ' : '' }}
             </span>
           </span>
         </div>

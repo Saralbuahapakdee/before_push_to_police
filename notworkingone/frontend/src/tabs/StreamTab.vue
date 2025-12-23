@@ -42,7 +42,7 @@
       <h3 class="stream-title">
         {{ selectedCamera?.camera_name || 'Select a camera' }}
       </h3>
-      <p class="stream-location">📍 {{ selectedCamera?.location }}</p>
+      <p class="stream-location">{{ selectedCamera?.location }}</p>
       <img v-if="selectedCamera" :src="videoUrl" class="video-stream" alt="AI Stream" />
       
       <!-- Recent Detections -->
