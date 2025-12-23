@@ -16,11 +16,11 @@ class DetectionService {
     this.token = null
     this.lastTimestamp = null
     
-    // Track last incident per weapon type (5 min cooldown)
-    this.lastIncidentByWeapon = new Map() // key: weaponType, value: { timestamp, incidentId }
-    this.INCIDENT_COOLDOWN = 5 * 60 * 1000 // 5 minutes in milliseconds
+    // Track last logged detection per weapon+camera (5 min cooldown)
+    this.lastLoggedDetection = new Map() // key: "cameraId:weaponType", value: timestamp
+    this.LOG_COOLDOWN = 5 * 60 * 1000 // 5 minutes in milliseconds
     
-    // NEW: Track current active alert
+    // Track current active alert
     this.currentAlert = null
   }
 
@@ -37,7 +37,7 @@ class DetectionService {
     this.isConnected = false
     this.token = null
     this.lastTimestamp = null
-    this.lastIncidentByWeapon.clear()
+    this.lastLoggedDetection.clear()
     this.currentAlert = null
     console.log('🔄 Detection service reset')
   }
@@ -107,7 +107,7 @@ class DetectionService {
           
           this.showNotification(data)
           
-          // Log detections with 5-minute cooldown per weapon type
+          // Log detections with 5-minute cooldown per weapon+camera
           await this.logDetectionsWithCooldown(data)
         }
         
@@ -132,6 +132,7 @@ class DetectionService {
     }
     
     const now = Date.now()
+    const cameraId = 1 // Default camera ID
     
     try {
       for (const [weaponType, data] of Object.entries(detection.objects)) {
@@ -140,13 +141,14 @@ class DetectionService {
         
         if (count > 0 && confidences.length > 0) {
           const normalizedType = this.normalizeWeaponType(weaponType)
+          const logKey = `${cameraId}:${normalizedType}`
           
-          // Check if we've created an incident for this weapon type recently
-          const lastIncident = this.lastIncidentByWeapon.get(normalizedType)
+          // Check if we've logged this weapon+camera recently
+          const lastLogged = this.lastLoggedDetection.get(logKey)
           
-          if (lastIncident && (now - lastIncident.timestamp) < this.INCIDENT_COOLDOWN) {
-            const remainingTime = Math.ceil((this.INCIDENT_COOLDOWN - (now - lastIncident.timestamp)) / 1000)
-            console.log(`⏳ Skipping ${normalizedType} - incident #${lastIncident.incidentId} created ${Math.round((now - lastIncident.timestamp) / 1000)}s ago (cooldown: ${remainingTime}s remaining)`)
+          if (lastLogged && (now - lastLogged) < this.LOG_COOLDOWN) {
+            const remainingTime = Math.ceil((this.LOG_COOLDOWN - (now - lastLogged)) / 1000)
+            console.log(`⏳ Skipping ${normalizedType} log - last logged ${Math.round((now - lastLogged) / 1000)}s ago (cooldown: ${remainingTime}s remaining)`)
             continue
           }
           
@@ -154,7 +156,7 @@ class DetectionService {
           
           console.log(`📝 Logging detection: ${normalizedType} (${(avgConfidence * 100).toFixed(1)}% confidence)`)
           
-          // Log to backend - this will auto-create incident if confidence >= 0.80
+          // Log to backend
           const response = await fetch('/api/log-detection', {
             method: 'POST',
             headers: {
@@ -162,7 +164,7 @@ class DetectionService {
               'Authorization': `Bearer ${this.token}`
             },
             body: JSON.stringify({
-              camera_id: 1,
+              camera_id: cameraId,
               weapon_type: normalizedType,
               confidence_score: avgConfidence
             })
@@ -170,27 +172,25 @@ class DetectionService {
           
           if (response.ok) {
             const result = await response.json()
-            console.log(`✅ Logged ${normalizedType} detection:`, result.message)
+            console.log(`✅ ${result.message}`)
             
-            // If a NEW incident was created, update our cooldown tracker and set alert
-            if (result.incident_id && result.is_new_incident) {
-              console.log(`🚨 NEW INCIDENT #${result.incident_id} created for ${normalizedType}`)
-              
-              // Store this incident in cooldown tracker
-              this.lastIncidentByWeapon.set(normalizedType, {
-                timestamp: now,
-                incidentId: result.incident_id
-              })
-              
-              // Fetch full incident details for alert
-              await this.fetchAndSetIncidentAlert(result.incident_id)
+            // If a NEW log was created, update our cooldown tracker
+            if (result.is_new_log) {
+              this.lastLoggedDetection.set(logKey, now)
+              console.log(`🕐 Cooldown started for ${logKey}`)
               
               // Clean up old entries (older than cooldown period)
-              for (const [key, value] of this.lastIncidentByWeapon.entries()) {
-                if (now - value.timestamp > this.INCIDENT_COOLDOWN) {
-                  this.lastIncidentByWeapon.delete(key)
+              for (const [key, timestamp] of this.lastLoggedDetection.entries()) {
+                if (now - timestamp > this.LOG_COOLDOWN) {
+                  this.lastLoggedDetection.delete(key)
                 }
               }
+            }
+            
+            // If a NEW incident was created, fetch and set alert
+            if (result.incident_id && result.is_new_incident) {
+              console.log(`🚨 NEW INCIDENT #${result.incident_id} created for ${normalizedType}`)
+              await this.fetchAndSetIncidentAlert(result.incident_id)
             }
           } else {
             const error = await response.json()

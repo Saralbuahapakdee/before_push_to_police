@@ -55,9 +55,15 @@
       @logout="handleLogout"
     />
 
-    <!-- NEW: Incident Alert Banner with Close Button -->
+    <!-- NEW: Incident Alert Banner with Queue Counter -->
     <div v-if="token && currentAlert" class="incident-alert-banner">
       <button @click="dismissAlert" class="alert-close-btn" title="Dismiss alert">✕</button>
+      
+      <!-- Queue Counter Badge -->
+      <div v-if="alertQueueCount > 1" class="alert-queue-badge" :title="`${alertQueueCount} alerts in queue`">
+        {{ alertQueueCount }}
+      </div>
+      
       <div class="alert-content">
         <div class="alert-icon">🚨</div>
         <div class="alert-info">
@@ -70,6 +76,11 @@
             <span>{{ formatTime(currentAlert.incident.detected_at) }}</span>
           </div>
         </div>
+      </div>
+      
+      <!-- Progress indicator if multiple alerts -->
+      <div v-if="alertQueueCount > 1" class="alert-progress">
+        <span class="progress-text">Alert {{ currentAlertIndex }} of {{ alertQueueCount }}</span>
       </div>
     </div>
   </div>
@@ -99,6 +110,14 @@ const loginData = ref({
 })
 
 const currentAlert = ref(null)
+const alertQueue = ref([])
+
+const alertQueueCount = computed(() => alertQueue.value.length)
+
+const currentAlertIndex = computed(() => {
+  if (!currentAlert.value || alertQueue.value.length === 0) return 0
+  return alertQueue.value.findIndex(a => a.id === currentAlert.value.id) + 1
+})
 
 let unsubscribeDetection = null
 
@@ -130,6 +149,7 @@ onUnmounted(() => {
 function startDetectionService() {
   unsubscribeDetection = detectionService.subscribe((state) => {
     currentAlert.value = state.currentAlert
+    alertQueue.value = state.alertQueue
   })
   
   detectionService.startPolling(token.value)
@@ -216,6 +236,7 @@ function handleLogout() {
   token.value = ''
   userData.value = { username: '', fullName: '', role: '', userId: null }
   currentAlert.value = null
+  alertQueue.value = []
   
   localStorage.removeItem('authToken')
   localStorage.removeItem('currentUsername')
@@ -397,7 +418,7 @@ body {
   font-weight: 600;
 }
 
-/* NEW: Incident Alert Banner Styles */
+/* Incident Alert Banner Styles */
 .incident-alert-banner {
   position: fixed;
   bottom: 20px;
@@ -451,11 +472,36 @@ body {
   font-weight: bold;
   transition: all 0.2s ease;
   opacity: 0.8;
+  z-index: 2;
 }
 
 .alert-close-btn:hover {
   opacity: 1;
   transform: scale(1.1);
+}
+
+.alert-queue-badge {
+  position: absolute;
+  top: 8px;
+  right: 40px;
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+  border: 2px solid white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: bold;
+  z-index: 2;
+  animation: bounce 1s ease-in-out infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
 }
 
 .alert-content {
@@ -495,6 +541,19 @@ body {
   gap: 8px;
   font-size: 0.9rem;
   opacity: 0.95;
+}
+
+.alert-progress {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+  text-align: center;
+}
+
+.progress-text {
+  font-size: 0.85rem;
+  opacity: 0.9;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {
