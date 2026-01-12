@@ -20,7 +20,7 @@ class DetectionService {
     this.lastLoggedDetection = new Map() // key: "cameraId:weaponType", value: timestamp
     this.LOG_COOLDOWN = 5 * 60 * 1000 // 5 minutes in milliseconds
     
-    // Track current active alert
+    // Track current active alert - ONLY ONE ALERT AT A TIME
     this.currentAlert = null
   }
 
@@ -187,7 +187,7 @@ class DetectionService {
               }
             }
             
-            // If a NEW incident was created, fetch and set alert
+            // If a NEW incident was created, REPLACE current alert
             if (result.incident_id && result.is_new_incident) {
               console.log(`🚨 NEW INCIDENT #${result.incident_id} created for ${normalizedType}`)
               await this.fetchAndSetIncidentAlert(result.incident_id)
@@ -216,12 +216,15 @@ class DetectionService {
       
       if (response.ok) {
         const data = await response.json()
+        
+        // 🔥 NEW ALERT REPLACES OLD ALERT (not queued)
         this.currentAlert = {
+          id: incidentId, // Add ID for tracking
           incident: data.incident,
           timestamp: Date.now()
         }
         
-        console.log('🔔 Alert set:', this.currentAlert)
+        console.log('🔔 Alert REPLACED with new incident:', this.currentAlert)
         this.notifyListeners()
       }
     } catch (error) {

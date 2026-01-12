@@ -9,7 +9,7 @@
             🚨 Incidents
           </button>
           <button @click="activeTab = 'stream'" :class="{ active: activeTab === 'stream' }" class="nav-tab">
-            📹 Single Feed
+            📹 Live Stream
           </button>
           <button @click="activeTab = 'logs'" :class="{ active: activeTab === 'logs' }" class="nav-tab">
             📋 Detection Logs

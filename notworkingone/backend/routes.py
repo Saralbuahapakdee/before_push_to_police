@@ -260,10 +260,9 @@ def set_prefs():
 @token_required
 def log_det():
     """
-    FIXED: Only creates detection logs if:
-    1. No detection of same weapon type on same camera within last 5 minutes
-    2. Creates ONE incident per weapon type per time window (5 minutes)
-    Prevents spam from rapid MQTT messages (20/sec)
+    FIXED: Separates detection log cooldown from incident creation cooldown
+    - Detection logs: 5-minute cooldown per weapon+camera
+    - Incidents: Independent check - creates if no recent incident exists
     """
     try:
         data = request.json
@@ -278,13 +277,12 @@ def log_det():
         from database import get_db_connection
         from datetime import datetime, timedelta
         
-        # Check if there's already a recent detection for this weapon+camera (within last 5 minutes)
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
             five_minutes_ago = datetime.now() - timedelta(minutes=5)
             
-            # Check for existing recent detection
+            # ===== STEP 1: Check/Create Detection Log (5-min cooldown) =====
             cursor.execute('''
                 SELECT id, detection_time FROM detection_logs 
                 WHERE camera_id = ? 
@@ -297,32 +295,27 @@ def log_det():
             existing_detection = cursor.fetchone()
             
             if existing_detection:
-                # There's already a recent detection - DON'T create a new log
+                # Detection log exists - skip creating new one
+                detection_id = existing_detection['id']
                 time_since = (datetime.now() - datetime.fromisoformat(existing_detection['detection_time'])).total_seconds()
-                remaining = int(300 - time_since)  # 300 seconds = 5 minutes
+                remaining = int(300 - time_since)
                 
                 print(f"⏳ Skipping log for {weapon_type} on camera {camera_id} - recent detection {int(time_since)}s ago (cooldown: {remaining}s remaining)")
                 
-                return {
-                    "message": f"Detection skipped - recent detection found ({int(time_since)}s ago)",
-                    "detection_id": existing_detection['id'],
-                    "is_new_log": False,
-                    "cooldown_remaining": remaining
-                }
-            
-            # No recent detection - CREATE a new log
-            detection_id = log_detection(user_id, camera_id, weapon_type, confidence_score)
-            
-            print(f"✅ Created NEW detection log #{detection_id} for {weapon_type} on camera {camera_id} (confidence: {confidence_score:.2%})")
-            
-            # Check if we should create an incident (confidence >= 0.80)
-            incident_id = None
-            if confidence_score >= 0.80:
-                # Get camera location
-                cursor.execute('SELECT location FROM cameras WHERE id = ?', (camera_id,))
-                row = cursor.fetchone()
-                location = row['location'] if row else 'Unknown'
+                is_new_log = False
+            else:
+                # No recent detection - CREATE new log
+                detection_id = log_detection(user_id, camera_id, weapon_type, confidence_score)
                 
+                print(f"✅ Created NEW detection log #{detection_id} for {weapon_type} on camera {camera_id} (confidence: {confidence_score:.2%})")
+                
+                is_new_log = True
+            
+            # ===== STEP 2: Check/Create Incident (INDEPENDENT check) =====
+            incident_id = None
+            is_new_incident = False
+            
+            if confidence_score >= 0.80:
                 # Check for existing recent incident (within last 5 minutes)
                 cursor.execute('''
                     SELECT id, status FROM incidents 
@@ -337,6 +330,7 @@ def log_det():
                 existing_incident = cursor.fetchone()
                 
                 if existing_incident:
+                    # Incident exists - just link detection to it
                     incident_id = existing_incident['id']
                     print(f"✓ Using existing incident #{incident_id} for {weapon_type} (status: {existing_incident['status']})")
                     
@@ -345,15 +339,13 @@ def log_det():
                                  (incident_id, detection_id))
                     conn.commit()
                     
-                    return {
-                        "message": f"Detection logged and linked to existing incident #{incident_id}",
-                        "incident_id": incident_id,
-                        "detection_id": detection_id,
-                        "is_new_log": True,
-                        "is_new_incident": False
-                    }
+                    is_new_incident = False
                 else:
-                    # No recent incident - create a new one
+                    # No recent incident - CREATE new one
+                    cursor.execute('SELECT location FROM cameras WHERE id = ?', (camera_id,))
+                    row = cursor.fetchone()
+                    location = row['location'] if row else 'Unknown'
+                    
                     incident_id = create_incident(
                         camera_id, 
                         weapon_type,
@@ -365,19 +357,23 @@ def log_det():
                     
                     print(f"🚨 Created NEW incident #{incident_id} for {weapon_type} detection (confidence: {confidence_score:.2%})")
                     
-                    return {
-                        "message": f"Detection logged and NEW incident #{incident_id} created for {weapon_type}", 
-                        "incident_id": incident_id,
-                        "detection_id": detection_id,
-                        "is_new_log": True,
-                        "is_new_incident": True
-                    }
+                    is_new_incident = True
             
-            return {
-                "message": "Detection logged successfully (confidence too low for incident)",
-                "detection_id": detection_id,
-                "is_new_log": True
-            }
+            # ===== STEP 3: Return Response =====
+            if incident_id:
+                return {
+                    "message": f"Detection logged and {'NEW' if is_new_incident else 'existing'} incident #{incident_id} {'created' if is_new_incident else 'linked'} for {weapon_type}",
+                    "incident_id": incident_id,
+                    "detection_id": detection_id,
+                    "is_new_log": is_new_log,
+                    "is_new_incident": is_new_incident
+                }
+            else:
+                return {
+                    "message": "Detection logged successfully (confidence too low for incident)",
+                    "detection_id": detection_id,
+                    "is_new_log": is_new_log
+                }
         
     except Exception as e:
         print(f"Log detection error: {e}")

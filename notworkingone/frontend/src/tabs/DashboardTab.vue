@@ -65,7 +65,7 @@
           <div class="card-subtitle">{{ cameraInfo }}</div>
         </div>
         <div class="summary-card">
-          <h4>Avg Confidence</h4>
+          <h4>Average Confidence</h4>
           <div class="card-value">{{ avgConfidence }}%</div>
           <div class="card-subtitle" :class="getConfidenceClass(avgConfidence / 100)">
             {{ getConfidenceLabel(avgConfidence / 100) }}
