@@ -3,24 +3,6 @@
     <div class="incidents-header">
       <h2>🚨 Incident Management</h2>
       <div class="header-actions">
-        <!-- View Toggle -->
-        <div class="view-toggle">
-          <button 
-            @click="viewMode = 'horizontal'" 
-            :class="['toggle-btn', { active: viewMode === 'horizontal' }]"
-            title="Card View"
-          >
-            ⊞ Cards
-          </button>
-          <button 
-            @click="viewMode = 'vertical'" 
-            :class="['toggle-btn', { active: viewMode === 'vertical' }]"
-            title="List View"
-          >
-            ☰ List
-          </button>
-        </div>
-
         <select v-model="filterWeapon" @change="loadIncidents" class="filter-select">
           <option :value="null">All Weapons</option>
           <option value="knife">Knife</option>
@@ -76,6 +58,24 @@
           />
         </template>
         
+        <!-- View Toggle -->
+        <div class="view-toggle">
+          <button 
+            @click="viewMode = 'horizontal'" 
+            :class="['toggle-btn', { active: viewMode === 'horizontal' }]"
+            title="Card View"
+          >
+            ⊞ Cards
+          </button>
+          <button 
+            @click="viewMode = 'vertical'" 
+            :class="['toggle-btn', { active: viewMode === 'vertical' }]"
+            title="List View"
+          >
+            ☰ List
+          </button>
+        </div>
+
         <button @click="loadIncidents" class="refresh-btn">🔄</button>
       </div>
     </div>

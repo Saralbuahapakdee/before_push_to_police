@@ -240,7 +240,9 @@ const cameraInfo = computed(() => {
 
 const totalDetections = computed(() => {
   if (!dashboardData.value) return 0
-  return dashboardData.value.weapon_totals.reduce((sum, weapon) => sum + weapon.total, 0)
+  
+  // Use weaponTotals which already applies the weapon filter
+  return weaponTotals.value.reduce((sum, weapon) => sum + weapon.total, 0)
 })
 
 const dailyAverage = computed(() => {
@@ -251,9 +253,11 @@ const dailyAverage = computed(() => {
 })
 
 const avgConfidence = computed(() => {
-  if (!dashboardData.value || dashboardData.value.weapon_totals.length === 0) return 0
-  const avg = dashboardData.value.weapon_totals.reduce((sum, w) => 
-    sum + (w.avg_conf || 0), 0) / dashboardData.value.weapon_totals.length
+  if (!dashboardData.value || weaponTotals.value.length === 0) return 0
+  
+  // Use weaponTotals which already applies the weapon filter
+  const avg = weaponTotals.value.reduce((sum, w) => 
+    sum + (w.avg_conf || 0), 0) / weaponTotals.value.length
   return Math.round(avg * 100)
 })
 
