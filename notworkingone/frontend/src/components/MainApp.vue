@@ -3,7 +3,7 @@
     <!-- Navigation Header -->
     <div class="nav-header">
       <div class="nav-left">
-        <h2 class="app-title">🛡️ Police Weapon Detection System</h2>
+        <h2 class="app-title">Police Weapon Detection System</h2>
         <div class="nav-tabs">
           <button @click="activeTab = 'incidents'" :class="{ active: activeTab === 'incidents' }" class="nav-tab">
             🚨 Incidents

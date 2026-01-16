@@ -4,7 +4,6 @@
     <div v-if="!token" class="login-container">
       <div class="login-card">
         <div class="login-header">
-          <div class="badge-icon">🛡️</div>
           <h1>Weapon Detection System</h1>
           <p class="subtitle">Law Enforcement Portal</p>
         </div>
@@ -301,11 +300,6 @@ body {
   text-align: center;
 }
 
-.badge-icon {
-  font-size: 4rem;
-  margin-bottom: 15px;
-}
-
 .login-header h1 {
   font-size: 1.8rem;
   margin-bottom: 8px;
@@ -506,10 +500,6 @@ body {
   
   .login-header h1 {
     font-size: 1.5rem;
-  }
-  
-  .badge-icon {
-    font-size: 3rem;
   }
   
   .incident-alert-banner {

@@ -3,6 +3,31 @@
     <div class="incidents-header">
       <h2>🚨 Incident Management</h2>
       <div class="header-actions">
+        <!-- View Toggle -->
+        <div class="view-toggle">
+          <button 
+            @click="viewMode = 'horizontal'" 
+            :class="['toggle-btn', { active: viewMode === 'horizontal' }]"
+            title="Card View"
+          >
+            ⊞ Cards
+          </button>
+          <button 
+            @click="viewMode = 'vertical'" 
+            :class="['toggle-btn', { active: viewMode === 'vertical' }]"
+            title="List View"
+          >
+            ☰ List
+          </button>
+        </div>
+
+        <select v-model="filterWeapon" @change="loadIncidents" class="filter-select">
+          <option :value="null">All Weapons</option>
+          <option value="knife">Knife</option>
+          <option value="pistol">Pistol</option>
+          <option value="heavy_weapon">Heavy Weapon</option>
+        </select>
+
         <select v-model="filterStatus" @change="loadIncidents" class="filter-select">
           <option value="">All Status</option>
           <option value="pending">🔴 Pending</option>
@@ -17,13 +42,11 @@
           </option>
         </select>
         
-        <!-- Date Range Type Selector -->
         <select v-model="dateRangeType" @change="handleDateRangeChange" class="filter-select">
           <option value="preset">Quick Select</option>
           <option value="custom">Custom Range</option>
         </select>
 
-        <!-- Quick Presets -->
         <select v-if="dateRangeType === 'preset'" v-model="filterDays" @change="loadIncidents" class="filter-select">
           <option :value="1">Today</option>
           <option :value="7">Last 7 days</option>
@@ -35,7 +58,6 @@
           <option :value="365">Last year</option>
         </select>
 
-        <!-- Custom Date Range -->
         <template v-if="dateRangeType === 'custom'">
           <input 
             type="date" 
@@ -43,7 +65,6 @@
             @change="loadIncidents"
             :max="endDate"
             class="date-input"
-            title="Start Date"
           />
           <input 
             type="date" 
@@ -52,7 +73,6 @@
             :min="startDate"
             :max="today"
             class="date-input"
-            title="End Date"
           />
         </template>
         
@@ -95,15 +115,88 @@
     <!-- Incidents List -->
     <div class="incidents-list">
       <div v-if="isLoading" class="loading">Loading incidents...</div>
-      <div v-else-if="filteredIncidents.length === 0" class="no-incidents">
+      <div v-else-if="sortedIncidents.length === 0" class="no-incidents">
         No incidents found for selected filters
       </div>
+
+      <!-- List View - Table Style -->
+      <div v-else-if="viewMode === 'vertical'" class="table-view">
+        <div class="table-header">
+          <div class="th-status" @click="sortBy('status')">
+            Status
+            <span v-if="sortColumn === 'status'" class="sort-icon">
+              {{ sortDirection === 'asc' ? '▲' : '▼' }}
+            </span>
+          </div>
+          <div class="th-weapon" @click="sortBy('weapon_type')">
+            Weapon
+            <span v-if="sortColumn === 'weapon_type'" class="sort-icon">
+              {{ sortDirection === 'asc' ? '▲' : '▼' }}
+            </span>
+          </div>
+          <div class="th-camera" @click="sortBy('camera_name')">
+            Camera
+            <span v-if="sortColumn === 'camera_name'" class="sort-icon">
+              {{ sortDirection === 'asc' ? '▲' : '▼' }}
+            </span>
+          </div>
+          <div class="th-location" @click="sortBy('camera_location')">
+            Location
+            <span v-if="sortColumn === 'camera_location'" class="sort-icon">
+              {{ sortDirection === 'asc' ? '▲' : '▼' }}
+            </span>
+          </div>
+          <div class="th-time" @click="sortBy('detected_at')">
+            Detected At
+            <span v-if="sortColumn === 'detected_at'" class="sort-icon">
+              {{ sortDirection === 'asc' ? '▲' : '▼' }}
+            </span>
+          </div>
+          <div class="th-officer" @click="sortBy('assigned_to_username')">
+            Assigned To
+            <span v-if="sortColumn === 'assigned_to_username'" class="sort-icon">
+              {{ sortDirection === 'asc' ? '▲' : '▼' }}
+            </span>
+          </div>
+        </div>
+
+        <div 
+          v-for="incident in sortedIncidents" 
+          :key="incident.id" 
+          :class="['table-row', incident.status]"
+          @click="selectIncident(incident)"
+        >
+          <div class="td-status" data-label="Status">
+            <span :class="['status-badge', incident.status]">
+              {{ formatStatus(incident.status) }}
+            </span>
+          </div>
+          <div class="td-weapon" data-label="Weapon">
+            <span :class="['weapon-badge', incident.weapon_type]">
+              {{ formatWeaponName(incident.weapon_type) }}
+            </span>
+          </div>
+          <div class="td-camera" data-label="Camera">
+            <strong>{{ incident.camera_name }}</strong>
+          </div>
+          <div class="td-location" data-label="Location">
+            {{ incident.camera_location }}
+          </div>
+          <div class="td-time" data-label="Detected At">
+            {{ formatDateTime(incident.detected_at) }}
+          </div>
+          <div class="td-officer" data-label="Assigned To">
+            {{ incident.assigned_to_username || '-' }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Card View -->
       <div v-else class="incident-cards">
-        <div v-for="incident in filteredIncidents" :key="incident.id" 
+        <div v-for="incident in sortedIncidents" :key="incident.id" 
              :class="['incident-card', incident.status]"
              @click="selectIncident(incident)">
           <div class="incident-header-row">
-            <div class="incident-number">{{ incident.incident_number }}</div>
             <div :class="['status-badge', incident.status]">
               {{ formatStatus(incident.status) }}
             </div>
@@ -111,25 +204,25 @@
           
           <div class="incident-info">
             <div class="info-row">
-              <span class="label">📹 Camera:</span>
+              <span class="label">Camera:</span>
               <span class="value">{{ incident.camera_name }}</span>
             </div>
             <div class="info-row">
-              <span class="label">📍 Location:</span>
+              <span class="label">Location:</span>
               <span class="value">{{ incident.camera_location }}</span>
             </div>
             <div class="info-row">
-              <span class="label">⚔️ Weapon:</span>
+              <span class="label">Weapon:</span>
               <span :class="['weapon-badge', incident.weapon_type]">
                 {{ formatWeaponName(incident.weapon_type) }}
               </span>
             </div>
             <div class="info-row">
-              <span class="label">🕐 Detected:</span>
+              <span class="label">Detected:</span>
               <span class="value">{{ formatDateTime(incident.detected_at) }}</span>
             </div>
             <div v-if="incident.assigned_to_username" class="info-row">
-              <span class="label">👮 Assigned:</span>
+              <span class="label">Assigned:</span>
               <span class="value">{{ incident.assigned_to_username }}</span>
             </div>
           </div>
@@ -137,7 +230,7 @@
       </div>
     </div>
 
-    <!-- Incident Detail Modal -->
+    <!-- Modal (unchanged) -->
     <div v-if="selectedIncident" class="modal-overlay" @click="closeModal">
       <div class="modal-detail" @click.stop>
         <div class="modal-header">
@@ -149,6 +242,10 @@
           <div class="detail-section">
             <h4>Incident Details</h4>
             <div class="detail-grid">
+              <div class="detail-item">
+                <label>Incident ID:</label>
+                <span class="incident-number-text">{{ selectedIncident.incident_number }}</span>
+              </div>
               <div class="detail-item">
                 <label>Status:</label>
                 <span :class="['status-badge', selectedIncident.status]">
@@ -199,7 +296,6 @@
             <p class="description-text">{{ selectedIncident.resolution_notes }}</p>
           </div>
 
-          <!-- Action Form -->
           <div class="detail-section">
             <h4>Take Action</h4>
             
@@ -258,22 +354,21 @@ const props = defineProps({
 const incidents = ref([])
 const officers = ref([])
 const selectedIncident = ref(null)
+const filterWeapon = ref(null)
 const filterStatus = ref('')
 const filterOfficer = ref('')
 const dateRangeType = ref('preset')
 const filterDays = ref(7)
 const isLoading = ref(false)
+const viewMode = ref('horizontal')
 
-// Date range
+// Sorting
+const sortColumn = ref('detected_at')
+const sortDirection = ref('desc')
+
 const today = new Date().toISOString().split('T')[0]
 const startDate = ref(getDateDaysAgo(7))
 const endDate = ref(today)
-
-function getDateDaysAgo(days) {
-  const date = new Date()
-  date.setDate(date.getDate() - days)
-  return date.toISOString().split('T')[0]
-}
 
 const actionData = ref({
   assigned_to: '',
@@ -281,19 +376,31 @@ const actionData = ref({
   resolution_notes: ''
 })
 
-const dateRangeDisplay = computed(() => {
-  if (dateRangeType.value === 'preset') {
-    if (filterDays.value === 1) return 'Today'
-    if (filterDays.value === 7) return 'Last 7 days'
-    if (filterDays.value === 30) return 'Last 30 days'
-    return `Last ${filterDays.value} days`
-  } else {
-    return `${formatDate(startDate.value)} - ${formatDate(endDate.value)}`
+function getDateDaysAgo(days) {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  return date.toISOString().split('T')[0]
+}
+
+function formatTime(dateTimeString) {
+  if (!dateTimeString) return 'N/A'
+  try {
+    return new Date(dateTimeString).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    })
+  } catch {
+    return 'N/A'
   }
-})
+}
 
 const filteredIncidents = computed(() => {
   let filtered = [...incidents.value]
+  
+  // Filter by weapon type
+  if (filterWeapon.value) {
+    filtered = filtered.filter(incident => incident.weapon_type === filterWeapon.value)
+  }
   
   // Filter by date range
   if (dateRangeType.value === 'custom') {
@@ -307,7 +414,6 @@ const filteredIncidents = computed(() => {
       return incidentDate >= start && incidentDate <= end
     })
   } else {
-    // Preset date filter
     const cutoffDate = new Date()
     cutoffDate.setDate(cutoffDate.getDate() - filterDays.value)
     cutoffDate.setHours(0, 0, 0, 0)
@@ -319,6 +425,35 @@ const filteredIncidents = computed(() => {
   }
   
   return filtered
+})
+
+const sortedIncidents = computed(() => {
+  return [...filteredIncidents.value].sort((a, b) => {
+    let aVal = a[sortColumn.value]
+    let bVal = b[sortColumn.value]
+    
+    // Handle date sorting
+    if (sortColumn.value === 'detected_at') {
+      aVal = new Date(aVal).getTime()
+      bVal = new Date(bVal).getTime()
+    }
+    
+    // Handle string sorting (case-insensitive)
+    if (typeof aVal === 'string' && typeof bVal === 'string') {
+      aVal = aVal.toLowerCase()
+      bVal = bVal.toLowerCase()
+    }
+    
+    // Handle null values
+    if (aVal === null || aVal === undefined) aVal = ''
+    if (bVal === null || bVal === undefined) bVal = ''
+    
+    if (sortDirection.value === 'asc') {
+      return aVal > bVal ? 1 : aVal < bVal ? -1 : 0
+    } else {
+      return aVal < bVal ? 1 : aVal > bVal ? -1 : 0
+    }
+  })
 })
 
 const stats = computed(() => {
@@ -333,10 +468,17 @@ const stats = computed(() => {
 onMounted(async () => {
   await loadOfficers()
   await loadIncidents()
-  
-  // Auto-refresh every 30 seconds
   setInterval(loadIncidents, 30000)
 })
+
+function sortBy(column) {
+  if (sortColumn.value === column) {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortColumn.value = column
+    sortDirection.value = column === 'detected_at' ? 'desc' : 'asc'
+  }
+}
 
 function handleDateRangeChange() {
   if (dateRangeType.value === 'preset') {
@@ -474,15 +616,6 @@ function formatDateTime(dateTimeString) {
     return dateTimeString
   }
 }
-
-function formatDate(dateString) {
-  if (!dateString) return 'N/A'
-  try {
-    return new Date(dateString).toLocaleDateString()
-  } catch {
-    return dateString
-  }
-}
 </script>
 
 <style scoped>
@@ -513,6 +646,39 @@ function formatDate(dateString) {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.view-toggle {
+  display: flex;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.toggle-btn {
+  padding: 8px 16px;
+  background: white;
+  border: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: #2c3e50;
+  transition: all 0.3s ease;
+  border-right: 1px solid #e0e0e0;
+}
+
+.toggle-btn:last-child {
+  border-right: none;
+}
+
+.toggle-btn.active {
+  background: #4a90e2;
+  color: white;
+  font-weight: 600;
+}
+
+.toggle-btn:hover:not(.active) {
+  background: #f8f9fa;
 }
 
 .filter-select,
@@ -599,6 +765,65 @@ function formatDate(dateString) {
   font-style: italic;
 }
 
+/* ========== TABLE VIEW (List Mode) ========== */
+.table-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.table-header {
+  display: grid;
+  grid-template-columns: 110px 120px 150px 1fr 180px 140px;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  font-weight: 600;
+  color: #2c3e50;
+  font-size: 0.9rem;
+}
+
+.table-header > div {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.table-header > div:hover {
+  color: #4a90e2;
+}
+
+.sort-icon {
+  margin-left: 4px;
+  color: #4a90e2;
+  font-size: 0.8rem;
+}
+
+.table-row {
+  display: grid;
+  grid-template-columns: 110px 120px 150px 1fr 180px 140px;
+  gap: 12px;
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border-left: 4px solid transparent;
+  align-items: center;
+}
+
+.table-row:hover {
+  background: #e9ecef;
+  transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.table-row.pending { border-left-color: #e74c3c; }
+.table-row.responding { border-left-color: #f39c12; }
+.table-row.resolved { border-left-color: #27ae60; }
+
+/* ========== CARD VIEW ========== */
 .incident-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -636,38 +861,9 @@ function formatDate(dateString) {
 
 .incident-header-row {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   margin-bottom: 12px;
-}
-
-.incident-number {
-  font-weight: 700;
-  color: #2c3e50;
-  font-size: 1.05rem;
-}
-
-.status-badge {
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.status-badge.pending {
-  background: #fee;
-  color: #e74c3c;
-}
-
-.status-badge.responding {
-  background: #fff3cd;
-  color: #f39c12;
-}
-
-.status-badge.resolved {
-  background: #d4edda;
-  color: #27ae60;
 }
 
 .incident-info {
@@ -686,7 +882,7 @@ function formatDate(dateString) {
 
 .label {
   color: #7f8c8d;
-  min-width: 90px;
+  min-width: 60px;
 }
 
 .value {
@@ -694,11 +890,37 @@ function formatDate(dateString) {
   font-weight: 500;
 }
 
-.weapon-badge {
-  padding: 3px 10px;
-  border-radius: 10px;
+/* Status badges for table */
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
   font-size: 0.8rem;
   font-weight: 600;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+.status-badge.pending {
+  background: #fee;
+  color: #e74c3c;
+}
+
+.status-badge.responding {
+  background: #fff3cd;
+  color: #f39c12;
+}
+
+.status-badge.resolved {
+  background: #d4edda;
+  color: #27ae60;
+}
+
+.weapon-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: inline-block;
 }
 
 .weapon-badge.knife {
@@ -716,7 +938,7 @@ function formatDate(dateString) {
   color: #9b59b6;
 }
 
-/* Modal Styles */
+/* ========== MODAL ========== */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -805,18 +1027,17 @@ function formatDate(dateString) {
   color: #7f8c8d;
   font-size: 0.85rem;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
-.detail-item span {
-  color: #2c3e50;
-  font-size: 1rem;
+.incident-number-text {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  color: #4a90e2;
 }
 
 .description-text {
   color: #2c3e50;
   line-height: 1.5;
-  font-size: 0.95rem;
 }
 
 .action-form {
@@ -841,7 +1062,6 @@ function formatDate(dateString) {
   padding: 8px 10px;
   border: 2px solid #e0e0e0;
   border-radius: 6px;
-  font-size: 0.95rem;
   transition: border-color 0.3s ease;
 }
 
@@ -893,6 +1113,15 @@ function formatDate(dateString) {
   font-weight: 600;
 }
 
+/* ========== RESPONSIVE ========== */
+@media (max-width: 1200px) {
+  .table-header,
+  .table-row {
+    grid-template-columns: 100px 110px 140px 1fr 160px 120px;
+    font-size: 0.85rem;
+  }
+}
+
 @media (max-width: 768px) {
   .incidents-header {
     flex-direction: column;
@@ -904,6 +1133,7 @@ function formatDate(dateString) {
     flex-direction: column;
   }
   
+  .view-toggle,
   .filter-select,
   .date-input,
   .refresh-btn {
@@ -914,8 +1144,28 @@ function formatDate(dateString) {
     grid-template-columns: 1fr;
   }
   
-  .detail-grid {
-    grid-template-columns: 1fr;
+  .table-header {
+    display: none;
+  }
+  
+  .table-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+  }
+  
+  .table-row > div {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .table-row > div::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #7f8c8d;
+    font-size: 0.85rem;
   }
 }
 </style>
