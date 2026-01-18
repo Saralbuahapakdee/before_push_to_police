@@ -3,7 +3,6 @@
     <div class="incidents-header">
       <h2>🚨 Incident Management</h2>
       <div class="header-actions">
-        <!-- NEW: Camera Filter -->
         <select v-model="filterCamera" @change="loadIncidents" class="filter-select">
           <option :value="null">All Cameras</option>
           <option v-for="camera in cameras" :key="camera.id" :value="camera.id">
@@ -199,6 +198,12 @@
         <div v-for="incident in sortedIncidents" :key="incident.id" 
              :class="['incident-card', incident.status]"
              @click="selectIncident(incident)">
+          <!-- Image Thumbnail -->
+          <div v-if="incident.image_path" class="incident-image-thumb">
+            <img :src="`/api/${incident.image_path}`" alt="Incident capture" />
+            <div class="image-overlay">📸</div>
+          </div>
+          
           <div class="incident-header-row">
             <div :class="['status-badge', incident.status]">
               {{ formatStatus(incident.status) }}
@@ -241,6 +246,22 @@
         </div>
         
         <div class="modal-content">
+          <!-- Incident Image Section -->
+          <div v-if="selectedIncident.image_path" class="detail-section image-section">
+            <h4>📸 Captured Evidence</h4>
+            <div class="incident-image-container">
+              <img 
+                :src="`/api/${selectedIncident.image_path}`" 
+                alt="Incident capture" 
+                class="incident-image"
+                @click="openImageFullscreen"
+              />
+              <div class="image-caption">
+                Click image to view full screen
+              </div>
+            </div>
+          </div>
+
           <div class="detail-section">
             <h4>Incident Details</h4>
             <div class="detail-grid">
@@ -342,6 +363,14 @@
         </div>
       </div>
     </div>
+
+    <!-- Fullscreen Image Modal -->
+    <div v-if="fullscreenImage" class="fullscreen-modal" @click="closeFullscreen">
+      <div class="fullscreen-content">
+        <button @click="closeFullscreen" class="fullscreen-close">✕</button>
+        <img :src="fullscreenImage" alt="Incident capture fullscreen" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -365,6 +394,7 @@ const dateRangeType = ref('preset')
 const filterDays = ref(7)
 const isLoading = ref(false)
 const viewMode = ref('horizontal')
+const fullscreenImage = ref(null)
 
 const sortColumn = ref('detected_at')
 const sortDirection = ref('desc')
@@ -548,6 +578,16 @@ function closeModal() {
     response_notes: '',
     resolution_notes: ''
   }
+}
+
+function openImageFullscreen() {
+  if (selectedIncident.value && selectedIncident.value.image_path) {
+    fullscreenImage.value = `/api/${selectedIncident.value.image_path}`
+  }
+}
+
+function closeFullscreen() {
+  fullscreenImage.value = null
 }
 
 async function updateStatus(newStatus) {
@@ -838,6 +878,7 @@ function formatDateTime(dateTimeString) {
   border-left: 4px solid #e74c3c;
   cursor: pointer;
   transition: all 0.3s ease;
+  position: relative;
 }
 
 .incident-card:hover {
@@ -856,6 +897,33 @@ function formatDateTime(dateTimeString) {
 
 .incident-card.resolved { 
   border-left-color: #27ae60; 
+}
+
+.incident-image-thumb {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+
+.incident-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.image-overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.9rem;
 }
 
 .incident-header-row {
@@ -953,8 +1021,8 @@ function formatDateTime(dateTimeString) {
   background: white;
   border-radius: 12px;
   width: 100%;
-  max-width: 700px;
-  max-height: 85vh;
+  max-width: 800px;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -998,12 +1066,42 @@ function formatDateTime(dateTimeString) {
   margin-bottom: 20px;
 }
 
+.detail-section.image-section {
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: 8px;
+}
+
 .detail-section h4 {
   color: #2c3e50;
   margin-bottom: 12px;
   border-bottom: 2px solid #e0e0e0;
   padding-bottom: 6px;
   font-size: 0.95rem;
+}
+
+.incident-image-container {
+  text-align: center;
+}
+
+.incident-image {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.incident-image:hover {
+  transform: scale(1.02);
+}
+
+.image-caption {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: #7f8c8d;
+  font-style: italic;
 }
 
 .detail-grid {
@@ -1109,6 +1207,53 @@ function formatDateTime(dateTimeString) {
   font-weight: 600;
 }
 
+.fullscreen-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 20px;
+}
+
+.fullscreen-content {
+  position: relative;
+  max-width: 95vw;
+  max-height: 95vh;
+}
+
+.fullscreen-content img {
+  max-width: 100%;
+  max-height: 95vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.fullscreen-close {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: none;
+  font-size: 2rem;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.fullscreen-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: rotate(90deg);
+}
+
 @media (max-width: 1200px) {
   .table-header,
   .table-row {
@@ -1161,6 +1306,15 @@ function formatDateTime(dateTimeString) {
     font-weight: 600;
     color: #7f8c8d;
     font-size: 0.85rem;
+  }
+  
+  .incident-image {
+    max-height: 300px;
+  }
+  
+  .fullscreen-close {
+    top: 10px;
+    right: 10px;
   }
 }
 </style>
