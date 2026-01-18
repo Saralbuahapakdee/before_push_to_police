@@ -3,6 +3,14 @@
     <div class="incidents-header">
       <h2>🚨 Incident Management</h2>
       <div class="header-actions">
+        <!-- NEW: Camera Filter -->
+        <select v-model="filterCamera" @change="loadIncidents" class="filter-select">
+          <option :value="null">All Cameras</option>
+          <option v-for="camera in cameras" :key="camera.id" :value="camera.id">
+            {{ camera.camera_name }}
+          </option>
+        </select>
+
         <select v-model="filterWeapon" @change="loadIncidents" class="filter-select">
           <option :value="null">All Weapons</option>
           <option value="knife">Knife</option>
@@ -58,7 +66,6 @@
           />
         </template>
         
-        <!-- View Toggle -->
         <div class="view-toggle">
           <button 
             @click="viewMode = 'horizontal'" 
@@ -80,7 +87,6 @@
       </div>
     </div>
 
-    <!-- Stats Summary -->
     <div class="stats-row">
       <div class="stat-card pending">
         <div class="stat-icon">🔴</div>
@@ -112,14 +118,12 @@
       </div>
     </div>
 
-    <!-- Incidents List -->
     <div class="incidents-list">
       <div v-if="isLoading" class="loading">Loading incidents...</div>
       <div v-else-if="sortedIncidents.length === 0" class="no-incidents">
         No incidents found for selected filters
       </div>
 
-      <!-- List View - Table Style -->
       <div v-else-if="viewMode === 'vertical'" class="table-view">
         <div class="table-header">
           <div class="th-status" @click="sortBy('status')">
@@ -191,7 +195,6 @@
         </div>
       </div>
 
-      <!-- Card View -->
       <div v-else class="incident-cards">
         <div v-for="incident in sortedIncidents" :key="incident.id" 
              :class="['incident-card', incident.status]"
@@ -230,7 +233,6 @@
       </div>
     </div>
 
-    <!-- Modal (unchanged) -->
     <div v-if="selectedIncident" class="modal-overlay" @click="closeModal">
       <div class="modal-detail" @click.stop>
         <div class="modal-header">
@@ -351,9 +353,11 @@ const props = defineProps({
   userData: Object
 })
 
+const cameras = ref([])
 const incidents = ref([])
 const officers = ref([])
 const selectedIncident = ref(null)
+const filterCamera = ref(null)
 const filterWeapon = ref(null)
 const filterStatus = ref('')
 const filterOfficer = ref('')
@@ -362,7 +366,6 @@ const filterDays = ref(7)
 const isLoading = ref(false)
 const viewMode = ref('horizontal')
 
-// Sorting
 const sortColumn = ref('detected_at')
 const sortDirection = ref('desc')
 
@@ -382,27 +385,17 @@ function getDateDaysAgo(days) {
   return date.toISOString().split('T')[0]
 }
 
-function formatTime(dateTimeString) {
-  if (!dateTimeString) return 'N/A'
-  try {
-    return new Date(dateTimeString).toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    })
-  } catch {
-    return 'N/A'
-  }
-}
-
 const filteredIncidents = computed(() => {
   let filtered = [...incidents.value]
   
-  // Filter by weapon type
+  if (filterCamera.value) {
+    filtered = filtered.filter(incident => incident.camera_id === filterCamera.value)
+  }
+  
   if (filterWeapon.value) {
     filtered = filtered.filter(incident => incident.weapon_type === filterWeapon.value)
   }
   
-  // Filter by date range
   if (dateRangeType.value === 'custom') {
     const start = new Date(startDate.value)
     start.setHours(0, 0, 0, 0)
@@ -432,19 +425,16 @@ const sortedIncidents = computed(() => {
     let aVal = a[sortColumn.value]
     let bVal = b[sortColumn.value]
     
-    // Handle date sorting
     if (sortColumn.value === 'detected_at') {
       aVal = new Date(aVal).getTime()
       bVal = new Date(bVal).getTime()
     }
     
-    // Handle string sorting (case-insensitive)
     if (typeof aVal === 'string' && typeof bVal === 'string') {
       aVal = aVal.toLowerCase()
       bVal = bVal.toLowerCase()
     }
     
-    // Handle null values
     if (aVal === null || aVal === undefined) aVal = ''
     if (bVal === null || bVal === undefined) bVal = ''
     
@@ -466,6 +456,7 @@ const stats = computed(() => {
 })
 
 onMounted(async () => {
+  await loadCameras()
   await loadOfficers()
   await loadIncidents()
   setInterval(loadIncidents, 30000)
@@ -486,6 +477,18 @@ function handleDateRangeChange() {
   } else {
     startDate.value = getDateDaysAgo(7)
     endDate.value = today
+  }
+}
+
+async function loadCameras() {
+  try {
+    const res = await fetch('/api/cameras')
+    if (res.ok) {
+      const data = await res.json()
+      cameras.value = data.cameras
+    }
+  } catch (error) {
+    console.error('Could not load cameras:', error)
   }
 }
 
@@ -765,7 +768,6 @@ function formatDateTime(dateTimeString) {
   font-style: italic;
 }
 
-/* ========== TABLE VIEW (List Mode) ========== */
 .table-view {
   display: flex;
   flex-direction: column;
@@ -823,7 +825,6 @@ function formatDateTime(dateTimeString) {
 .table-row.responding { border-left-color: #f39c12; }
 .table-row.resolved { border-left-color: #27ae60; }
 
-/* ========== CARD VIEW ========== */
 .incident-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -837,8 +838,6 @@ function formatDateTime(dateTimeString) {
   border-left: 4px solid #e74c3c;
   cursor: pointer;
   transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
 }
 
 .incident-card:hover {
@@ -870,7 +869,6 @@ function formatDateTime(dateTimeString) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 12px;
 }
 
 .info-row {
@@ -890,7 +888,6 @@ function formatDateTime(dateTimeString) {
   font-weight: 500;
 }
 
-/* Status badges for table */
 .status-badge {
   padding: 4px 12px;
   border-radius: 12px;
@@ -938,7 +935,6 @@ function formatDateTime(dateTimeString) {
   color: #9b59b6;
 }
 
-/* ========== MODAL ========== */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -1113,7 +1109,6 @@ function formatDateTime(dateTimeString) {
   font-weight: 600;
 }
 
-/* ========== RESPONSIVE ========== */
 @media (max-width: 1200px) {
   .table-header,
   .table-row {
