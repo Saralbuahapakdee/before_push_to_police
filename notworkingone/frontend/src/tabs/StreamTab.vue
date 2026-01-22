@@ -1,4 +1,4 @@
-<!-- src/tabs/StreamTab.vue - COMPLETELY REWRITTEN FOR RELIABILITY -->
+<!-- src/tabs/StreamTab.vue - FIXED WEAPON PREFERENCES -->
 <template>
   <div class="stream-tab">
     <!-- Camera Selector -->
@@ -37,6 +37,12 @@
       <button @click="savePreferences" class="save-preferences-btn" :disabled="isSaving">
         {{ isSaving ? 'Saving...' : 'Save Preferences' }}
       </button>
+      
+      <!-- Debug info (remove in production) -->
+      <div v-if="showDebug" class="debug-info">
+        <h4>Debug Info:</h4>
+        <pre>{{ debugInfo }}</pre>
+      </div>
     </div>
     
     <!-- Video Stream with Overlay -->
@@ -71,6 +77,9 @@
             <span class="weapon-icon">⚠️</span>
             <span class="weapon-label">{{ formatWeaponName(weapon) }}</span>
             <span class="weapon-confidence">{{ getAverageConfidence(data) }}%</span>
+            <span class="weapon-visibility">
+              {{ shouldShowWeapon(weapon) ? '(Visible)' : '(Hidden)' }}
+            </span>
           </div>
         </div>
       </div>
@@ -106,6 +115,7 @@ const selectedCamera = ref(null)
 const weaponPreferences = ref([])
 const allRecentDetections = ref([])
 const isSaving = ref(false)
+const showDebug = ref(false) // Set to true to see debug info
 const detectionState = ref({
   detected: false,
   objects: {},
@@ -119,6 +129,17 @@ const canvasHeight = ref(480)
 
 let unsubscribe = null
 let animationFrameId = null
+
+// WEAPON TYPE MAPPING - This is the key fix!
+const WEAPON_TYPE_MAP = {
+  // MQTT format -> Database format
+  'gun': 'pistol',
+  'heavy-weapon': 'heavy_weapon',
+  'knife': 'knife',
+  // Also support database format as input
+  'pistol': 'pistol',
+  'heavy_weapon': 'heavy_weapon'
+}
 
 // Weapon colors
 const weaponColors = {
@@ -139,12 +160,22 @@ const recentDetections = computed(() => {
   return allRecentDetections.value.filter(d => d.camera_id === selectedCamera.value.id)
 })
 
+const debugInfo = computed(() => {
+  return {
+    currentDetection: detectionState.value,
+    preferences: weaponPreferences.value,
+    preferencesLoaded: weaponPreferences.value.length > 0
+  }
+})
+
 onMounted(async () => {
   console.log('🔵 StreamTab mounted')
   
+  // Load preferences FIRST before subscribing to detections
+  await loadWeaponPreferences()
+  
   await Promise.all([
     loadCameras(),
-    loadWeaponPreferences(),
     loadRecentDetections()
   ])
   
@@ -219,10 +250,13 @@ function drawBoundingBoxes() {
   
   // Draw boxes for each detected weapon
   for (const [weaponType, data] of Object.entries(detectionState.value.objects || {})) {
-    // Check if this weapon should be shown
+    // IMPORTANT: Check if this weapon should be shown
     if (!shouldShowWeapon(weaponType)) {
+      console.log(`🚫 Hiding boxes for ${weaponType} (preference disabled)`)
       continue
     }
+    
+    console.log(`✅ Showing boxes for ${weaponType}`)
     
     const boxes = data.boxes || []
     const confidences = Array.isArray(data.confidences) 
@@ -293,33 +327,37 @@ function drawBoundingBoxes() {
   }
 }
 
+// FIXED: Properly normalize and check preferences
 function shouldShowWeapon(weaponType) {
+  // Normalize the weapon type from MQTT format to database format
   const normalized = normalizeWeaponType(weaponType)
   
-  // Find the preference for this weapon
+  // Find the preference for this normalized weapon type
   const pref = weaponPreferences.value.find(p => p.weapon_type === normalized)
   
+  // Default to showing if preference not found
   const shouldShow = pref ? pref.is_enabled : true
   
-  console.log(`Weapon ${weaponType} (${normalized}): ${shouldShow ? 'SHOW' : 'HIDE'}`, pref)
+  console.log(`🔍 Checking weapon: "${weaponType}" -> normalized: "${normalized}" -> preference found: ${!!pref} -> is_enabled: ${pref?.is_enabled} -> shouldShow: ${shouldShow}`)
   
   return shouldShow
 }
 
+// FIXED: Proper normalization function
 function normalizeWeaponType(weaponType) {
-  const mapping = {
-    'gun': 'pistol',
-    'heavy-weapon': 'heavy_weapon',
-    'knife': 'knife',
-    'pistol': 'pistol',
-    'heavy_weapon': 'heavy_weapon'
-  }
-  return mapping[weaponType.toLowerCase()] || weaponType.toLowerCase()
+  const lowercased = weaponType.toLowerCase()
+  const normalized = WEAPON_TYPE_MAP[lowercased] || lowercased
+  
+  console.log(`📝 Normalizing: "${weaponType}" -> "${lowercased}" -> "${normalized}"`)
+  
+  return normalized
 }
 
 function onPreferenceChange() {
-  console.log('🔄 Preference changed, current preferences:', weaponPreferences.value)
-  // Boxes will update automatically on next draw cycle
+  console.log('🔄 Preference changed')
+  console.log('Current preferences:', JSON.stringify(weaponPreferences.value, null, 2))
+  // Redraw immediately to reflect changes
+  drawBoundingBoxes()
 }
 
 async function loadCameras() {
@@ -359,25 +397,41 @@ async function loadWeaponPreferences() {
       const data = await res.json()
       weaponPreferences.value = data.preferences
       
+      // Create default preferences if none exist
       if (weaponPreferences.value.length === 0) {
         weaponPreferences.value = [
           { weapon_type: 'knife', is_enabled: true },
           { weapon_type: 'pistol', is_enabled: true },
           { weapon_type: 'heavy_weapon', is_enabled: true }
         ]
+        console.log('⚠️ No preferences found, using defaults')
       }
       
       console.log('✅ Weapon preferences loaded:', JSON.stringify(weaponPreferences.value, null, 2))
+    } else {
+      console.error('Failed to load preferences:', res.status)
+      // Use defaults on error
+      weaponPreferences.value = [
+        { weapon_type: 'knife', is_enabled: true },
+        { weapon_type: 'pistol', is_enabled: true },
+        { weapon_type: 'heavy_weapon', is_enabled: true }
+      ]
     }
   } catch (error) {
     console.error('Could not load weapon preferences:', error)
+    // Use defaults on error
+    weaponPreferences.value = [
+      { weapon_type: 'knife', is_enabled: true },
+      { weapon_type: 'pistol', is_enabled: true },
+      { weapon_type: 'heavy_weapon', is_enabled: true }
+    ]
   }
 }
 
 async function savePreferences() {
   isSaving.value = true
   
-  console.log('💾 Saving preferences:', weaponPreferences.value)
+  console.log('💾 Saving preferences:', JSON.stringify(weaponPreferences.value, null, 2))
   
   try {
     const res = await fetch('/api/weapon-preferences', {
@@ -391,9 +445,14 @@ async function savePreferences() {
     
     if (res.ok) {
       console.log('✅ Weapon preferences saved successfully')
+      // No alert - silent save
+    } else {
+      console.error('Failed to save preferences')
+      alert('❌ Failed to save preferences')
     }
   } catch (error) {
     console.error('Could not save preferences:', error)
+    alert('❌ Error saving preferences')
   }
   
   isSaving.value = false
@@ -445,6 +504,37 @@ function formatTime(timeString) {
 </script>
 
 <style scoped>
+/* ... (keep all existing styles) ... */
+
+.weapon-visibility {
+  font-size: 0.8rem;
+  color: #7f8c8d;
+  font-style: italic;
+}
+
+.debug-info {
+  margin-top: 20px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.debug-info h4 {
+  margin-bottom: 10px;
+  color: #2c3e50;
+}
+
+.debug-info pre {
+  background: #2c3e50;
+  color: #00ff00;
+  padding: 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+}
+
+/* Keep all your existing styles from the original file */
 .stream-tab {
   display: flex;
   flex-direction: column;
