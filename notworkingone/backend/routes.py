@@ -287,7 +287,6 @@ def log_det():
             
             five_minutes_ago = datetime.now() - timedelta(minutes=5)
             
-            # Check/Create Detection Log (5-min cooldown)
             cursor.execute('''
                 SELECT id, detection_time, image_path FROM detection_logs 
                 WHERE camera_id = ? 
@@ -329,10 +328,13 @@ def log_det():
                         with open(filepath, 'wb') as f:
                             f.write(img_bytes)
                         
-                        image_path = f"incident_images/{filename}"
-                        print(f"📸 Saved detection image: {image_path}")
+                        # Store path WITHOUT 'incident_images/' prefix since we'll add it in the route
+                        image_path = filename
+                        print(f"📸 Saved detection image: {filepath} (stored as: {image_path})")
                     except Exception as e:
-                        print(f"Error saving image: {e}")
+                        print(f"❌ Error saving image: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # Create new detection log with image path
                 detection_id = log_detection(user_id, camera_id, weapon_type, confidence_score, image_path)
@@ -341,7 +343,7 @@ def log_det():
                 
                 is_new_log = True
             
-            # Check/Create Incident
+            # Rest of the incident creation logic...
             incident_id = None
             is_new_incident = False
             
@@ -379,7 +381,7 @@ def log_det():
                         user_id, 
                         location,
                         f"Automatic incident created from {weapon_type} detection",
-                        image_path
+                        image_path  # Pass the image path to incident
                     )
                     
                     print(f"🚨 Created NEW incident #{incident_id} for {weapon_type} detection (confidence: {confidence_score:.2%})")
@@ -404,7 +406,7 @@ def log_det():
                 }
         
     except Exception as e:
-        print(f"Log detection error: {e}")
+        print(f"❌ Log detection error: {e}")
         import traceback
         traceback.print_exc()
         return {"error": "Internal server error"}, 500
@@ -427,19 +429,37 @@ def get_logs():
 
 
 # ========== IMAGE SERVING ROUTE ==========
-@detection_bp.get("/incident-image/<path:filename>")
+@detection_bp.get("/incident_images/<path:filename>")
 def serve_incident_image(filename):
     """Serve incident images"""
     try:
-        filepath = os.path.join(IMAGES_DIR, filename)
+        # Remove any 'incident_images/' prefix from filename if present
+        clean_filename = filename.replace('incident_images/', '')
+        
+        filepath = os.path.join(IMAGES_DIR, clean_filename)
+        
+        print(f"📸 Attempting to serve image: {filepath}")
+        print(f"📂 IMAGES_DIR: {IMAGES_DIR}")
+        print(f"📄 Clean filename: {clean_filename}")
+        print(f"✓ File exists: {os.path.exists(filepath)}")
+        
         if os.path.exists(filepath):
             with open(filepath, 'rb') as f:
                 image_data = f.read()
+            print(f"✅ Successfully loaded image: {len(image_data)} bytes")
             return Response(image_data, mimetype='image/jpeg')
         else:
+            print(f"❌ Image not found at: {filepath}")
+            # List files in directory for debugging
+            if os.path.exists(IMAGES_DIR):
+                print(f"📂 Files in {IMAGES_DIR}:")
+                for f in os.listdir(IMAGES_DIR):
+                    print(f"  - {f}")
             return {"error": "Image not found"}, 404
     except Exception as e:
-        print(f"Serve image error: {e}")
+        print(f"❌ Serve image error: {e}")
+        import traceback
+        traceback.print_exc()
         return {"error": "Internal server error"}, 500
 
 
