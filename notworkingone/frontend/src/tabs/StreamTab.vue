@@ -1,4 +1,4 @@
-<!-- src/tabs/StreamTab.vue - FIXED WEAPON PREFERENCES -->
+<!-- src/tabs/StreamTab.vue - FIXED WITH AUTO-SAVE -->
 <template>
   <div class="stream-tab">
     <!-- Camera Selector -->
@@ -27,21 +27,11 @@
         <label v-for="pref in weaponPreferences" :key="pref.weapon_type" class="weapon-checkbox">
           <input 
             type="checkbox" 
-            v-model="pref.is_enabled"
-            @change="onPreferenceChange"
+            :checked="pref.is_enabled"
+            @change="togglePreference(pref)"
           />
           <span class="weapon-name">{{ formatWeaponName(pref.weapon_type) }}</span>
-          <span class="checkbox-hint">(Show bounding boxes)</span>
         </label>
-      </div>
-      <button @click="savePreferences" class="save-preferences-btn" :disabled="isSaving">
-        {{ isSaving ? 'Saving...' : 'Save Preferences' }}
-      </button>
-      
-      <!-- Debug info (remove in production) -->
-      <div v-if="showDebug" class="debug-info">
-        <h4>Debug Info:</h4>
-        <pre>{{ debugInfo }}</pre>
       </div>
     </div>
     
@@ -77,9 +67,6 @@
             <span class="weapon-icon">⚠️</span>
             <span class="weapon-label">{{ formatWeaponName(weapon) }}</span>
             <span class="weapon-confidence">{{ getAverageConfidence(data) }}%</span>
-            <span class="weapon-visibility">
-              {{ shouldShowWeapon(weapon) ? '(Visible)' : '(Hidden)' }}
-            </span>
           </div>
         </div>
       </div>
@@ -115,7 +102,6 @@ const selectedCamera = ref(null)
 const weaponPreferences = ref([])
 const allRecentDetections = ref([])
 const isSaving = ref(false)
-const showDebug = ref(false) // Set to true to see debug info
 const detectionState = ref({
   detected: false,
   objects: {},
@@ -129,14 +115,13 @@ const canvasHeight = ref(480)
 
 let unsubscribe = null
 let animationFrameId = null
+let saveTimeout = null
 
-// WEAPON TYPE MAPPING - This is the key fix!
+// WEAPON TYPE MAPPING
 const WEAPON_TYPE_MAP = {
-  // MQTT format -> Database format
   'gun': 'pistol',
   'heavy-weapon': 'heavy_weapon',
   'knife': 'knife',
-  // Also support database format as input
   'pistol': 'pistol',
   'heavy_weapon': 'heavy_weapon'
 }
@@ -158,14 +143,6 @@ const videoUrl = computed(() => {
 const recentDetections = computed(() => {
   if (!selectedCamera.value) return []
   return allRecentDetections.value.filter(d => d.camera_id === selectedCamera.value.id)
-})
-
-const debugInfo = computed(() => {
-  return {
-    currentDetection: detectionState.value,
-    preferences: weaponPreferences.value,
-    preferencesLoaded: weaponPreferences.value.length > 0
-  }
 })
 
 onMounted(async () => {
@@ -206,6 +183,10 @@ onBeforeUnmount(() => {
   
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId)
+  }
+  
+  if (saveTimeout) {
+    clearTimeout(saveTimeout)
   }
 })
 
@@ -250,13 +231,9 @@ function drawBoundingBoxes() {
   
   // Draw boxes for each detected weapon
   for (const [weaponType, data] of Object.entries(detectionState.value.objects || {})) {
-    // IMPORTANT: Check if this weapon should be shown
     if (!shouldShowWeapon(weaponType)) {
-      console.log(`🚫 Hiding boxes for ${weaponType} (preference disabled)`)
       continue
     }
-    
-    console.log(`✅ Showing boxes for ${weaponType}`)
     
     const boxes = data.boxes || []
     const confidences = Array.isArray(data.confidences) 
@@ -327,37 +304,100 @@ function drawBoundingBoxes() {
   }
 }
 
-// FIXED: Properly normalize and check preferences
 function shouldShowWeapon(weaponType) {
-  // Normalize the weapon type from MQTT format to database format
   const normalized = normalizeWeaponType(weaponType)
-  
-  // Find the preference for this normalized weapon type
   const pref = weaponPreferences.value.find(p => p.weapon_type === normalized)
-  
-  // Default to showing if preference not found
-  const shouldShow = pref ? pref.is_enabled : true
-  
-  console.log(`🔍 Checking weapon: "${weaponType}" -> normalized: "${normalized}" -> preference found: ${!!pref} -> is_enabled: ${pref?.is_enabled} -> shouldShow: ${shouldShow}`)
-  
-  return shouldShow
+  return pref ? pref.is_enabled : true
 }
 
-// FIXED: Proper normalization function
 function normalizeWeaponType(weaponType) {
   const lowercased = weaponType.toLowerCase()
-  const normalized = WEAPON_TYPE_MAP[lowercased] || lowercased
-  
-  console.log(`📝 Normalizing: "${weaponType}" -> "${lowercased}" -> "${normalized}"`)
-  
-  return normalized
+  return WEAPON_TYPE_MAP[lowercased] || lowercased
 }
 
-function onPreferenceChange() {
-  console.log('🔄 Preference changed')
-  console.log('Current preferences:', JSON.stringify(weaponPreferences.value, null, 2))
+// Toggle preference and auto-save
+function togglePreference(pref) {
+  console.log(`🔄 Toggling ${pref.weapon_type} from ${pref.is_enabled} to ${!pref.is_enabled}`)
+  
+  // Toggle the value
+  pref.is_enabled = !pref.is_enabled
+  
   // Redraw immediately to reflect changes
   drawBoundingBoxes()
+  
+  // Clear any existing timeout
+  if (saveTimeout) {
+    clearTimeout(saveTimeout)
+  }
+  
+  // Debounce the save by 300ms
+  saveTimeout = setTimeout(async () => {
+    console.log('💾 Auto-saving preferences:', JSON.stringify(weaponPreferences.value, null, 2))
+    
+    try {
+      const res = await fetch('/api/weapon-preferences', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${props.token}` 
+        },
+        body: JSON.stringify({ preferences: weaponPreferences.value })
+      })
+      
+      if (res.ok) {
+        console.log('✅ Preferences auto-saved successfully')
+      } else {
+        console.error('❌ Failed to auto-save preferences')
+      }
+    } catch (error) {
+      console.error('❌ Error auto-saving preferences:', error)
+    }
+  }, 300)
+}
+
+// AUTO-SAVE function - saves immediately when checkbox is toggled
+async function autoSavePreferences() {
+  console.log('🔄 Auto-saving preferences...')
+  
+  // Redraw immediately to reflect changes
+  drawBoundingBoxes()
+  
+  // Clear any existing timeout
+  if (saveTimeout) {
+    clearTimeout(saveTimeout)
+  }
+  
+  // Debounce the save by 500ms in case user toggles multiple checkboxes quickly
+  saveTimeout = setTimeout(async () => {
+    isSaving.value = true
+    
+    console.log('💾 Saving preferences:', JSON.stringify(weaponPreferences.value, null, 2))
+    
+    try {
+      const res = await fetch('/api/weapon-preferences', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${props.token}` 
+        },
+        body: JSON.stringify({ preferences: weaponPreferences.value })
+      })
+      
+      if (res.ok) {
+        console.log('✅ Weapon preferences saved successfully')
+        // Show brief success indicator
+        setTimeout(() => {
+          isSaving.value = false
+        }, 500)
+      } else {
+        console.error('Failed to save preferences')
+        isSaving.value = false
+      }
+    } catch (error) {
+      console.error('Could not save preferences:', error)
+      isSaving.value = false
+    }
+  }, 500)
 }
 
 async function loadCameras() {
@@ -395,19 +435,35 @@ async function loadWeaponPreferences() {
     
     if (res.ok) {
       const data = await res.json()
-      weaponPreferences.value = data.preferences
+      console.log('📦 Raw preferences from API:', JSON.stringify(data, null, 2))
       
-      // Create default preferences if none exist
-      if (weaponPreferences.value.length === 0) {
+      if (data.preferences && data.preferences.length > 0) {
+        // Map the preferences and ensure is_enabled is a boolean
+        weaponPreferences.value = data.preferences.map(pref => ({
+          weapon_type: pref.weapon_type,
+          is_enabled: pref.is_enabled === true || pref.is_enabled === 1 || pref.is_enabled === '1'
+        }))
+        
+        console.log('✅ Weapon preferences loaded:', JSON.stringify(weaponPreferences.value, null, 2))
+      } else {
+        // Create default preferences if none exist
+        console.log('⚠️ No preferences found, creating defaults...')
         weaponPreferences.value = [
           { weapon_type: 'knife', is_enabled: true },
           { weapon_type: 'pistol', is_enabled: true },
           { weapon_type: 'heavy_weapon', is_enabled: true }
         ]
-        console.log('⚠️ No preferences found, using defaults')
+        
+        // Save the defaults immediately
+        await fetch('/api/weapon-preferences', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${props.token}` 
+          },
+          body: JSON.stringify({ preferences: weaponPreferences.value })
+        })
       }
-      
-      console.log('✅ Weapon preferences loaded:', JSON.stringify(weaponPreferences.value, null, 2))
     } else {
       console.error('Failed to load preferences:', res.status)
       // Use defaults on error
@@ -426,36 +482,6 @@ async function loadWeaponPreferences() {
       { weapon_type: 'heavy_weapon', is_enabled: true }
     ]
   }
-}
-
-async function savePreferences() {
-  isSaving.value = true
-  
-  console.log('💾 Saving preferences:', JSON.stringify(weaponPreferences.value, null, 2))
-  
-  try {
-    const res = await fetch('/api/weapon-preferences', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${props.token}` 
-      },
-      body: JSON.stringify({ preferences: weaponPreferences.value })
-    })
-    
-    if (res.ok) {
-      console.log('✅ Weapon preferences saved successfully')
-      // No alert - silent save
-    } else {
-      console.error('Failed to save preferences')
-      alert('❌ Failed to save preferences')
-    }
-  } catch (error) {
-    console.error('Could not save preferences:', error)
-    alert('❌ Error saving preferences')
-  }
-  
-  isSaving.value = false
 }
 
 async function loadRecentDetections() {
@@ -504,37 +530,6 @@ function formatTime(timeString) {
 </script>
 
 <style scoped>
-/* ... (keep all existing styles) ... */
-
-.weapon-visibility {
-  font-size: 0.8rem;
-  color: #7f8c8d;
-  font-style: italic;
-}
-
-.debug-info {
-  margin-top: 20px;
-  padding: 15px;
-  background: #f8f9fa;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
-}
-
-.debug-info h4 {
-  margin-bottom: 10px;
-  color: #2c3e50;
-}
-
-.debug-info pre {
-  background: #2c3e50;
-  color: #00ff00;
-  padding: 10px;
-  border-radius: 4px;
-  overflow-x: auto;
-  font-size: 0.85rem;
-}
-
-/* Keep all your existing styles from the original file */
 .stream-tab {
   display: flex;
   flex-direction: column;
@@ -615,7 +610,6 @@ function formatTime(timeString) {
   display: flex;
   flex-wrap: wrap;
   gap: 15px;
-  margin-bottom: 20px;
 }
 
 .weapon-checkbox {
@@ -636,6 +630,7 @@ function formatTime(timeString) {
   width: 18px;
   height: 18px;
   cursor: pointer;
+  accent-color: #4a90e2;
 }
 
 .weapon-name {
@@ -643,29 +638,8 @@ function formatTime(timeString) {
   color: #2c3e50;
 }
 
-.checkbox-hint {
-  font-size: 0.85rem;
-  color: #7f8c8d;
-  font-style: italic;
-}
-
-.save-preferences-btn {
-  padding: 10px 20px;
-  background-color: #27ae60;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
-
-.save-preferences-btn:hover:not(:disabled) {
-  background-color: #219a52;
-}
-
-.save-preferences-btn:disabled {
-  background-color: #bdc3c7;
-  cursor: not-allowed;
+.save-indicator {
+  display: none;
 }
 
 .stream-container {
